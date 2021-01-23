@@ -132,6 +132,8 @@ struct predict_params {
   // Other parameters.
   int max_shm;
   int num_blocks;
+  // threads_per_tree determines how many threads work on a single tree at once inside a block
+  int threads_per_tree;
 };
 
 // infer() calls the inference kernel with the parameters on the stream

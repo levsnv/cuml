@@ -82,11 +82,11 @@ struct forest {
   }
 
   void init_fixed_block_count(const raft::handle_t& h, int blocks_per_sm) {
-    int max_threads_per_sm, sm_count;
-    CUDA_CHECK(cudaDeviceGetAttribute(&max_threads_per_sm,
+    int max_threads_per_tree, sm_count;
+    CUDA_CHECK(cudaDeviceGetAttribute(&max_threads_per_tree,
                                       cudaDevAttrMaxThreadsPerMultiProcessor,
                                       h.get_device()));
-    int max_blocks_per_sm = max_threads_per_sm / FIL_TPB;
+    int max_blocks_per_sm = max_threads_per_tree / FIL_TPB;
     ASSERT(blocks_per_sm <= max_blocks_per_sm,
            "on this GPU, FIL blocks_per_sm cannot exceed %d",
            max_blocks_per_sm);
@@ -105,6 +105,7 @@ struct forest {
     global_bias_ = params->global_bias;
     leaf_algo_ = params->leaf_algo;
     num_classes_ = params->num_classes;
+    threads_per_tree_ = params->threads_per_tree;
     init_max_shm();
     init_fixed_block_count(h, params->blocks_per_sm);
   }
@@ -126,6 +127,7 @@ struct forest {
     // fixed_block_count_ == 0 means the number of thread blocks is
     // proportional to the number of rows
     params.num_blocks = fixed_block_count_;
+    params.threads_per_tree = threads_per_tree_;
 
     /**
     The binary classification / regression (FLOAT_UNARY_BINARY) predict_proba() works as follows
@@ -230,6 +232,7 @@ struct forest {
   leaf_algo_t leaf_algo_ = leaf_algo_t::FLOAT_UNARY_BINARY;
   int num_classes_ = 1;
   int fixed_block_count_ = 0;
+  int threads_per_tree_ = 1;
 };
 
 struct dense_forest : forest {
@@ -395,6 +398,9 @@ void check_params(const forest_params_t* params, bool dense) {
            "output should be a combination of RAW, AVG, SIGMOID and CLASS");
   }
   ASSERT(params->blocks_per_sm >= 0, "blocks_per_sm must be nonnegative");
+  ASSERT(params->threads_per_tree > 0, "threads_per_tree must be positive");
+  ASSERT(thrust::detail::is_power_of_2(params->threads_per_tree),
+         "threads_per_tree must be a power of 2");
 }
 
 template <typename T, typename L>
@@ -681,6 +687,7 @@ void tl2fil_common(forest_params_t* params, const tl::ModelImpl<T, L>& model,
   }
   params->num_trees = model.trees.size();
   params->blocks_per_sm = tl_params->blocks_per_sm;
+  params->threads_per_tree = tl_params->threads_per_tree;
 }
 
 // uses treelite model with additional tl_params to initialize FIL params

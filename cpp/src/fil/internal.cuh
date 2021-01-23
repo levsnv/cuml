@@ -231,6 +231,8 @@ struct forest_params_t {
   // suggested values (if nonzero) are from 2 to 7
   // if zero, launches ceildiv(num_rows, NITEMS) blocks
   int blocks_per_sm;
+  // threads_per_tree determines how many threads work on a single tree at once inside a block
+  int threads_per_tree;
 };
 
 /** init_dense uses params and nodes to initialize the dense forest stored in pf
