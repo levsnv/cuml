@@ -398,6 +398,8 @@ def get_number_positional_args(func, default=2):
 
 
 def print_error_histogram(prediction, ground_truth, error='relative'):
+    """ Print a order-of-magnitude histogram of discrepancies
+    """
     errors = np.abs(
       prediction / ground_truth - 1.
       if error == 'relative' else
