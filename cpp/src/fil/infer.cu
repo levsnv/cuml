@@ -451,7 +451,7 @@ void infer_k_launcher(storage_type forest, predict_params params,
                       cudaStream_t stream, int blockdim_x) {
   const int MAX_BATCH_ITEMS = 4;
   params.max_items =
-    (params.algo == algo_t::BATCH_TREE_REORG && params.threads_per_tree != 1)
+    (params.algo == algo_t::BATCH_TREE_REORG && params.threads_per_tree == 1)
       ? MAX_BATCH_ITEMS
       : 1;
 

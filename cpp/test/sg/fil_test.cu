@@ -55,6 +55,7 @@ struct FilTestParams {
   float global_bias = 0.0f;
   // runtime parameters
   int blocks_per_sm = 0;
+  int threads_per_tree = 1;
   algo_t algo = algo_t::NAIVE;
   int seed = 42;
   float tolerance = 2e-3f;
@@ -416,6 +417,7 @@ class PredictDenseFilTest : public BaseFilTest {
     fil_ps.leaf_algo = ps.leaf_algo;
     fil_ps.num_classes = ps.num_classes;
     fil_ps.blocks_per_sm = ps.blocks_per_sm;
+    fil_ps.threads_per_tree = ps.threads_per_tree;
 
     fil::init_dense(handle, pforest, nodes.data(), &fil_ps);
   }
@@ -472,6 +474,7 @@ class BasePredictSparseFilTest : public BaseFilTest {
     fil_params.leaf_algo = ps.leaf_algo;
     fil_params.num_classes = ps.num_classes;
     fil_params.blocks_per_sm = ps.blocks_per_sm;
+    fil_params.threads_per_tree = ps.threads_per_tree;
 
     dense2sparse();
     fil_params.num_nodes = sparse_nodes.size();
@@ -593,6 +596,7 @@ class TreeliteFilTest : public BaseFilTest {
     params.output_class = (ps.output & fil::output_t::CLASS) != 0;
     params.storage_type = storage_type;
     params.blocks_per_sm = ps.blocks_per_sm;
+    params.threads_per_tree = ps.threads_per_tree;
     fil::from_treelite(handle, pforest, (ModelHandle)model.get(), &params);
     CUDA_CHECK(cudaStreamSynchronize(stream));
   }
