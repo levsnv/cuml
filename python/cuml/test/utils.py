@@ -395,3 +395,19 @@ def get_number_positional_args(func, default=2):
             kwargs = 0
         return all_args - kwargs
     return default
+
+
+def print_error_histogram(prediction, ground_truth, error='relative'):
+    errors = np.abs(
+      prediction / ground_truth - 1.
+      if error == 'relative' else
+      prediction - ground_truth)
+    from math import inf
+    from re import sub
+    bins=[i for i in
+          [1e-9*10**(i/2) for i in range(0,30)]
+          if i < 0.3]
+    freqs = np.histogram(errors, [0] + bins)[0]
+    print('count\tlimit')
+    for f, b in zip(freqs, bins):
+        print(sub('e-0', 'e-', '%d\t%.0e' % (f, b)))
