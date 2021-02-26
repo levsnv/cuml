@@ -385,6 +385,7 @@ __global__ void infer_k(storage_type forest, predict_params params) {
   extern __shared__ char smem[];
   float* sdata = (float*)smem;
   // will break for NITEMS > 1
+  int sdata_stride = params.num_cols + 1 - params.num_cols % 2;
   for (size_t block_row0 = blockIdx.x * params.threads_per_tree;
        block_row0 < params.num_rows;
        block_row0 += params.threads_per_tree * gridDim.x) {
@@ -394,7 +395,7 @@ __global__ void infer_k(storage_type forest, predict_params params) {
       size_t row = block_row0 + j;
 #pragma unroll
       for (int col = threadIdx.x; col < params.num_cols; col += blockDim.x) {
-        sdata[j * params.num_cols + col] =
+        sdata[j * sdata_stride + col] =
           row < params.num_rows ? params.data[row * params.num_cols + col]
                                 : 0.0f;
       }
@@ -402,7 +403,7 @@ __global__ void infer_k(storage_type forest, predict_params params) {
 
     tree_aggregator_t<NITEMS, leaf_algo> acc(
       params.num_classes, sdata,
-      params.num_cols * params.threads_per_tree * sizeof(float));
+      sdata_stride * params.threads_per_tree * sizeof(float));
 
     __syncthreads();  // for both row cache init and acc init
 
@@ -419,7 +420,7 @@ __global__ void infer_k(storage_type forest, predict_params params) {
       if (tree < forest.num_trees()) {
         acc.accumulate(
           infer_one_tree<NITEMS, leaf_output_t<leaf_algo>::T>(
-            forest[tree], sdata + row * params.num_cols, params.num_cols),
+            forest[tree], sdata + row * sdata_stride, params.num_cols),
           tree);
       }
       if (leaf_algo == GROVE_PER_CLASS_MANY_CLASSES) __syncthreads();
@@ -435,11 +436,14 @@ __global__ void infer_k(storage_type forest, predict_params params) {
 template <int NITEMS, leaf_algo_t leaf_algo>
 size_t get_smem_footprint(predict_params params) {
   // will break for multiclass and threads_per_tree > 1
+  ASSERT(params.num_classes <= 2 || params.threads_per_tree == 1,
+         "multiclass not supported with threads_per_tree > 1");
   size_t finalize_footprint =
     tree_aggregator_t<NITEMS, leaf_algo>::smem_finalize_footprint(
       params.num_classes);
+  int sdata_stride = params.num_cols + 1 - params.num_cols % 2;
   size_t accumulate_footprint =
-    sizeof(float) * params.num_cols * params.threads_per_tree * NITEMS +
+    sizeof(float) * sdata_stride * params.threads_per_tree * NITEMS +
     tree_aggregator_t<NITEMS, leaf_algo>::smem_accumulate_footprint(
       params.num_classes);
 
