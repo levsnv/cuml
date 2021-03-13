@@ -196,7 +196,8 @@ cdef extern from "cuml/fil/fil.h" namespace "ML::fil":
     cdef forest_t from_treelite(handle_t& handle,
                                 forest_t*,
                                 ModelHandle,
-                                treelite_params_t*) except +
+                                treelite_params_t*,
+                                bool) except +
 
 cdef class ForestInference_impl():
 
@@ -337,7 +338,8 @@ cdef class ForestInference_impl():
         from_treelite(handle_[0],
                       &self.forest_data,
                       <ModelHandle> model_ptr,
-                      &treelite_params)
+                      &treelite_params,
+                      False)
         TreeliteQueryNumClass(<ModelHandle> model_ptr,
                               & self.num_class)
         return self
@@ -380,7 +382,8 @@ cdef class ForestInference_impl():
         from_treelite(handle_[0],
                       &self.forest_data,
                       <ModelHandle> model_ptr,
-                      &treelite_params)
+                      &treelite_params,
+                      False)
         TreeliteQueryNumClass(<ModelHandle> model_ptr,
                               &self.num_class)
         return self

@@ -440,6 +440,47 @@ int tree_root(const tl::Tree<T, L>& tree) {
   return 0;  // Treelite format assumes that the root is 0
 }
 
+typedef std::pair<int, int> pair_t;
+using std::tie;
+// hist has branch and leaf count given depth
+template <typename T, typename L>
+inline void tree_depth_hist(const tl::Tree<T, L>& tree,
+                            std::unordered_map<int, pair_t>& hist) {
+  std::stack<pair_t> stack;  // {tl_id, depth}
+  stack.push({tree_root(tree), 0});
+  while (!stack.empty()) {
+    int node_id, depth;
+    tie(node_id, depth) = stack.top();
+    stack.pop();
+    while (!tree.IsLeaf(node_id)) {
+      hist[depth].first++;
+      stack.push({tree.LeftChild(node_id), depth + 1});
+      node_id = tree.RightChild(node_id);
+      depth++;
+    }
+    hist[depth].second++;
+  }
+}
+
+template <typename T, typename L>
+void depth_hist_and_max(const tl::ModelImpl<T, L>& model) {
+  std::unordered_map<int, pair_t> depth_hist;
+  for (const auto& tree : model.trees) tree_depth_hist(tree, depth_hist);
+  std::vector<std::pair<int, pair_t>> vec_hist;
+  for (auto p : depth_hist) vec_hist.emplace_back(p);
+  std::sort(vec_hist.begin(), vec_hist.end(),
+            [](auto a, auto b) { return a.first < b.first; });
+  printf("Forest max depth: %d\n", vec_hist.back().first);
+  printf("Depth hist:\ndepth\tbranches\tleaves\tnodes\n");
+  for (auto p : vec_hist) {
+    int level = p.first;
+    int n_branches, n_leaves;
+    tie(n_branches, n_leaves) = p.second;
+    printf("%3d\t%6d\t%6d\t%7d\n", level, n_branches, n_leaves,
+           n_branches + n_leaves);
+  }
+}
+
 template <typename T, typename L>
 inline int max_depth(const tl::Tree<T, L>& tree) {
   // trees of this depth aren't used, so it most likely means bad input data,
@@ -844,7 +885,8 @@ template void init_sparse<sparse_node8>(const raft::handle_t& h, forest_t* pf,
 template <typename T, typename L>
 void from_treelite(const raft::handle_t& handle, forest_t* pforest,
                    const tl::ModelImpl<T, L>& model,
-                   const treelite_params_t* tl_params) {
+                   const treelite_params_t* tl_params,
+                   bool print_forest_shape) {
   // Invariants on threshold and leaf types
   static_assert(std::is_same<T, float>::value || std::is_same<T, double>::value,
                 "Model must contain float32 or float64 thresholds for splits");
@@ -887,6 +929,7 @@ void from_treelite(const raft::handle_t& handle, forest_t* pforest,
       // sync is necessary as nodes is used in init_dense(),
       // but destructed at the end of this function
       CUDA_CHECK(cudaStreamSynchronize(handle.get_stream()));
+      if (print_forest_shape) print_shape(model, storage_type, nodes, {});
       break;
     }
     case storage_type_t::SPARSE: {
@@ -895,6 +938,7 @@ void from_treelite(const raft::handle_t& handle, forest_t* pforest,
       tl2fil_sparse(&trees, &nodes, &params, model, tl_params);
       init_sparse(handle, pforest, trees.data(), nodes.data(), &params);
       CUDA_CHECK(cudaStreamSynchronize(handle.get_stream()));
+      if (print_forest_shape) print_shape(model, storage_type, nodes, trees);
       break;
     }
     case storage_type_t::SPARSE8: {
@@ -903,6 +947,7 @@ void from_treelite(const raft::handle_t& handle, forest_t* pforest,
       tl2fil_sparse(&trees, &nodes, &params, model, tl_params);
       init_sparse(handle, pforest, trees.data(), nodes.data(), &params);
       CUDA_CHECK(cudaStreamSynchronize(handle.get_stream()));
+      if (print_forest_shape) print_shape(model, storage_type, nodes, trees);
       break;
     }
     default:
@@ -911,12 +956,24 @@ void from_treelite(const raft::handle_t& handle, forest_t* pforest,
 }
 
 void from_treelite(const raft::handle_t& handle, forest_t* pforest,
-                   ModelHandle model, const treelite_params_t* tl_params) {
+                   ModelHandle model, const treelite_params_t* tl_params,
+                   bool print_forest_shape) {
   const tl::Model& model_ref = *(tl::Model*)model;
-  model_ref.Dispatch([&handle, pforest, tl_params](const auto& model_inner) {
+  model_ref.Dispatch([&handle, pforest, tl_params,
+                      print_forest_shape](const auto& model_inner) {
     // model_inner is of the concrete type tl::ModelImpl<T, L>
-    from_treelite(handle, pforest, model_inner, tl_params);
+    from_treelite(handle, pforest, model_inner, tl_params, print_forest_shape);
   });
+}
+
+template <typename T, typename L, typename N>
+void print_shape(const tl::ModelImpl<T, L>& model, storage_type_t storage,
+                 const std::vector<N>& nodes, const std::vector<int>& trees) {
+  float size_mb = (trees.size() * sizeof trees.front() +
+                   nodes.size() * sizeof nodes.front()) /
+                  1e6;
+  printf("%s model size %.2f MB\n", storage_type_repr[storage], size_mb);
+  depth_hist_and_max(model);
 }
 
 void free(const raft::handle_t& h, forest_t f) {

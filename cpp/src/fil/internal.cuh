@@ -144,14 +144,17 @@ struct alignas(8) sparse_node8 : base_node {
   }
   sparse_node8() = default;
   sparse_node8(val_t output, float thresh, int fid, bool def_left, bool is_leaf,
-               int left_index) {
+               int left_child) {
     if (is_leaf)
       val = output;
     else
       val.f = thresh;
-    bits = fid | left_index << LEFT_OFFSET |
+    bits = fid | left_child << LEFT_OFFSET |
            (def_left ? 1 : 0) << DEF_LEFT_OFFSET |
            (is_leaf ? 1 : 0) << IS_LEAF_OFFSET;
+    ASSERT(is_leaf || left_index() == left_child,
+           "error: sparse8 node was too far from root. Consider sparse16, a "
+           "more compact node layout, or smaller trees.");
   }
   /** index of the left child, where curr is the index of the current node */
   __host__ __device__ int left(int curr) const { return left_index(); }

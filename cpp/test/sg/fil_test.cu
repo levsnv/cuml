@@ -613,7 +613,8 @@ class TreeliteFilTest : public BaseFilTest {
     params.output_class = (ps.output & fil::output_t::CLASS) != 0;
     params.storage_type = storage_type;
     params.blocks_per_sm = ps.blocks_per_sm;
-    fil::from_treelite(handle, pforest, (ModelHandle)model.get(), &params);
+    fil::from_treelite(handle, pforest, (ModelHandle)model.get(), &params,
+                       false);
     CUDA_CHECK(cudaStreamSynchronize(stream));
   }
 };
