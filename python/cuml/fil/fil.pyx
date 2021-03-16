@@ -339,7 +339,7 @@ cdef class ForestInference_impl():
                       &self.forest_data,
                       <ModelHandle> model_ptr,
                       &treelite_params,
-                      False)
+                      True)
         TreeliteQueryNumClass(<ModelHandle> model_ptr,
                               & self.num_class)
         return self
@@ -383,7 +383,7 @@ cdef class ForestInference_impl():
                       &self.forest_data,
                       <ModelHandle> model_ptr,
                       &treelite_params,
-                      False)
+                      True)
         TreeliteQueryNumClass(<ModelHandle> model_ptr,
                               &self.num_class)
         return self

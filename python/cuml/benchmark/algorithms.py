@@ -404,7 +404,7 @@ def all_algorithms():
                 threshold=0.5,
                 storage_type="auto",
             ),
-            name="FIL",
+            name="FIL", # load an xgboost model
             accepts_labels=False,
             setup_cpu_func=_build_treelite_classifier,
             setup_cuml_func=_build_fil_classifier,
