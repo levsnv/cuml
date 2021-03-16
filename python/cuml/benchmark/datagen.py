@@ -107,23 +107,32 @@ def _gen_data_classification(
     )
 
 
-def _crop_df(df_name, X_df, y_df, n_samples, n_features):
+def _unpickle_and_crop_df(df_name, load_df, n_samples, n_features):
     """Generic function to exexute loading a dataset, then crop it"""
+    pickle_url = os.path.join(DATASETS_DIRECTORY,
+                              "%s-%d-samples.pkl" % (df_name, n_samples))
+    print(pickle_url)
+    if os.path.exists(pickle_url):
+        X, y = pickle.load(open(pickle_url, "rb"))
+    else:
+        X, y = load_df(n_samples)
+        pickle.dump((X, y), open(pickle_url, "wb"), protocol=4)
+    
     if not n_samples:
-        n_samples = X_df.shape[0]
+        n_samples = X.shape[0]
     if not n_features:
-        n_features = X_df.shape[1]
-    if n_features > X_df.shape[1]:
+        n_features = X.shape[1]
+    if n_features > X.shape[1]:
         raise ValueError(
             "%s dataset has only %d features, cannot support %d"
-            % (df_name, X_df.shape[1], n_features)
+            % (df_name, X.shape[1], n_features)
         )
-    if n_samples > X_df.shape[0]:
+    if n_samples > X.shape[0]:
         raise ValueError(
             "%s dataset has only %d rows, cannot support %d"
-            % (df_name, X_df.shape[0], n_samples)
+            % (df_name, X.shape[0], n_samples)
         )
-    return X_df.iloc[:n_samples, :n_features], y_df.iloc[:n_samples]
+    return X.iloc[:n_samples, :n_features], y.iloc[:n_samples]
 
 
 def show_progress(block_num, block_size, total_size):
@@ -179,119 +188,71 @@ def _gen_data_bosch(n_samples=0, n_features=0, random_state=42):
     """Wrapper returning Bosch dataset in Pandas format"""
     dataset_name = "Bosch"
     def load_df(n_samples):
-        pickle_url = os.path.join(DATASETS_DIRECTORY,
-                                  dataset_name + "-" + str(n_samples) + ".pkl")
-        print('Looking for ', pickle_url)
-        if os.path.exists(pickle_url):
-            return pickle.load(open(pickle_url, "rb"))
-
         print("kaggle competitions download -c bosch-production-line-performance -f " +
                   filename + " -p " + DATASETS_DIRECTORY)
         filename = "train_numeric.csv.zip"
         local_url = os.path.join(DATASETS_DIRECTORY, filename)
         os.system("kaggle competitions download -c bosch-production-line-performance -f " +
                   filename + " -p " + DATASETS_DIRECTORY)
+        kwargs = {'nrows': n_samples} if n_samples else {}
         X = pd.read_csv(local_url, index_col=0, compression='zip', dtype=np.float32,
-                        nrows=n_samples)
+                        **kwargs)
         y = X.iloc[:, -1].to_numpy(dtype=np.float32)
         X.drop(X.columns[-1], axis=1, inplace=True)
         X = X.to_numpy(dtype=np.float32)
-        X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=77,
-                                                            test_size=0.2,
-                                                            )
-        data = Data(X_train, X_test, y_train, y_test, LearningTask.CLASSIFICATION)
-        pickle.dump(data, open(pickle_url, "wb"), protocol=4)
-        return data
-    return _crop_df(dataset_name, load_df, n_samples, n_features)
+        return X, y
+    return _unpickle_and_crop_df(dataset_name, load_df, n_samples, n_features)
 
 
 def _gen_data_covtype(n_samples=0, n_features=0, random_state=42):
     """Wrapper returning covtype in Pandas format"""
     def load_df(n_samples):
-        X, y = fetch_covtype(return_X_y=True)  # pylint: disable=unexpected-keyword-arg
-        X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=77,
-                                                            test_size=0.2,
-                                                            )
-        return Data(X_train, X_test, y_train, y_test, LearningTask.MULTICLASS_CLASSIFICATION)
-    return _crop_df("covtype", load_df, n_samples, n_features)
+        return fetch_covtype(return_X_y=True)  # pylint: disable=unexpected-keyword-arg
+    return _unpickle_and_crop_df("covtype", load_df, n_samples, n_features)
 
 
 def _gen_data_epsilon(n_samples=0, n_features=0, random_state=42):
     """Wrapper returning epsilon dataset in Pandas format"""
     def load_df(n_samples):
-        pickle_url = os.path.join(DATASETS_DIRECTORY,
-                                  "epsilon" + "-" + str(n_samples) + ".pkl")
-        if os.path.exists(pickle_url):
-            return pickle.load(open(pickle_url, "rb"))
-
-        url_train = 'https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary' \
-                    '/epsilon_normalized.bz2'
-        url_test = 'https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary' \
-                   '/epsilon_normalized.t.bz2'
+        url_train = 'https://www.csie.ntu.edu.tw/~cjlin/libsvmtools' \
+                    '/datasets/binary/epsilon_normalized.bz2'
         train_uncompressed = _download_and_cache(url_train)
-        test_uncompressed = _download_and_cache(url_test)
+        print('loading ', train_uncompressed)
+        X, y = load_svmlight_file(train_uncompressed, dtype=np.float32)
+        if not n_samples or n_samples > y_train.size:
+            url_test = 'https://www.csie.ntu.edu.tw/~cjlin/libsvmtools' \
+                       '/datasets/binary/epsilon_normalized.t.bz2'
+            test_uncompressed = _download_and_cache(url_test)
+            print('loading ', test_uncompressed)
+            X_test, y_test = load_svmlight_file(test_uncompressed,
+                                                dtype=np.float32)
+            X = np.vstack(X, X_test)
+            y = np.append(y, y_test)
 
-        print('loading ', local_url_train)
-        X_train, y_train = load_svmlight_file(train_uncompressed,
-                                              dtype=np.float32)
-        print('loading ', local_url_test)
-        X_test, y_test = load_svmlight_file(test_uncompressed,
-                                            dtype=np.float32)
-        print('filtering')
-        X_train = X_train.toarray()
-        X_test = X_test.toarray()
-        y_train[y_train <= 0] = 0
-        y_test[y_test <= 0] = 0
+        X = X.toarray()
+        y[y <= 0] = 0
 
-        if n_samples is not None:
-            print("Warning: n_samples is specified, not using predefined test/train split for epsilon.")
-            X_train = X_train[:n_samples]
-            y_train = y_train[:n_samples]
-            X_test = X_test[:n_samples]
-            y_test = y_test[:n_samples]
-
-        print('pickling')
-        data = Data(X_train, X_test, y_train, y_test, LearningTask.CLASSIFICATION)
-        pickle.dump(data, open(pickle_url, "wb"), protocol=4)
-        return data
-    return _crop_df("epsilon", load_df, n_samples, n_features)
+        return X, y
+    return _unpickle_and_crop_df("epsilon", load_df, n_samples, n_features)
 
 
 def _gen_data_year(n_samples=0, n_features=0, random_state=42):
     """Wrapper returning Year dataset in Pandas format"""
-    pickle_url = os.path.join(DATASETS_DIRECTORY,
-                              "year" + "-" + str(n_samples) + ".pkl")
-    if os.path.exists(pickle_url):
-        return pickle.load(open(pickle_url, "rb"))
-    
-    url = 'https://archive.ics.uci.edu/ml/machine-learning-databases/00203/YearPredictionMSD.txt' \
-          '.zip'
-    uncompressed = _download_and_cache(url)
-    year = pd.read_csv(uncompressed, nrows=n_samples, header=None)
-    X = year.iloc[:, 1:].to_numpy(dtype=np.float32)
-    y = year.iloc[:, 0].to_numpy(dtype=np.float32)
+    def load_df(n_samples):
+      url = 'https://archive.ics.uci.edu/ml/machine-learning-databases/00203/YearPredictionMSD.txt' \
+            '.zip'
+      uncompressed = _download_and_cache(url)
+      kwargs = {'nrows': n_samples} if n_samples else {}
+      year = pd.read_csv(uncompressed, header=None, **kwargs)
+      X = year.iloc[:, 1:].to_numpy(dtype=np.float32)
+      y = year.iloc[:, 0].to_numpy(dtype=np.float32)
 
-    if not n_samples:
-        # this dataset requires a specific train/test split,
-        # with the specified number of rows at the start belonging to the train set,
-        # and the rest being the test set
-        X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False,
-                                                            train_size=463715,
-                                                            test_size=51630)
-    else:
-        print("Warning: n_samples is specified, not using predefined "
-              "test/train split for YearPredictionMSD.")
-        X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=77,
-                                                            test_size=0.2,
-                                                            )
-
-    data = Data(X_train, X_test, y_train, y_test, LearningTask.REGRESSION)
-    pickle.dump(data, open(pickle_url, "wb"), protocol=4)
-    return _crop_df("Year", load_df, n_samples, n_features)
+      return X, y
+    return _unpickle_and_crop_df("Year", load_df, n_samples, n_features)
 
 
 def _gen_data_higgs(n_samples=0, n_features=0, random_state=42):
-    """Wrapper returning Higgs in Pandas format"""
+    """Wrapper returning Higgs in cudf format"""
     def load_higgs(n_samples):
         """Returns the Higgs Boson dataset as an X, y tuple of dataframes."""
         higgs_url = 'https://archive.ics.uci.edu/ml/machine-learning-databases' \
@@ -304,14 +265,15 @@ def _gen_data_higgs(n_samples=0, n_features=0, random_state=42):
         dtypes_ls = [np.int32] + [
             np.float32 for _ in range(2, 30)
         ]  # Assign dtypes to each column
+        kwargs = {'nrows': n_samples} if n_samples else {}
         data_df = pd.read_csv(
-            decompressed_filepath, names=col_names, nrows=n_samples,
+            decompressed_filepath, names=col_names, **kwargs,
             dtype={k: v for k, v in zip(col_names, dtypes_ls)}
         )
         X_df = data_df[data_df.columns.difference(['label'])]
         y_df = data_df['label']
         return cudf.DataFrame.from_pandas(X_df), cudf.Series.from_pandas(y_df)
-    return _crop_df("Higgs", load_higgs, n_samples, n_features)
+    return _unpickle_and_crop_df("Higgs", load_higgs, n_samples, n_features)
 
 
 def _convert_to_numpy(data):
