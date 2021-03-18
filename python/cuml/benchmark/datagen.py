@@ -107,16 +107,22 @@ def _gen_data_classification(
     )
 
 
-def _unpickle_and_crop_df(df_name, load_df, n_samples, n_features):
+def _unpickle_or_crop_df(df_name, load_df, n_samples, n_features):
     """Generic function to exexute loading a dataset, then crop it"""
+    print(n_samples)
     pickle_url = os.path.join(DATASETS_DIRECTORY,
                               "%s-%d-samples.pkl" % (df_name, n_samples))
     print(pickle_url)
     if os.path.exists(pickle_url):
+        print('loading pickle')
         X, y = pickle.load(open(pickle_url, "rb"))
+        print('pickle loaded')
     else:
+        print('load_df')
         X, y = load_df(n_samples)
-        pickle.dump((X, y), open(pickle_url, "wb"), protocol=4)
+        X = pd.DataFrame(X)
+        y = pd.DataFrame(y)
+        print('shape of', df_name, X.shape)
     
     if not n_samples:
         n_samples = X.shape[0]
@@ -132,7 +138,11 @@ def _unpickle_and_crop_df(df_name, load_df, n_samples, n_features):
             "%s dataset has only %d rows, cannot support %d"
             % (df_name, X.shape[0], n_samples)
         )
-    return X.iloc[:n_samples, :n_features], y.iloc[:n_samples]
+    X_new, y_new = X.iloc[:n_samples, :n_features], y.iloc[:n_samples]
+    if not os.path.exists(pickle_url):
+        pickle.dump((X_new, y_new), open(pickle_url, "wb"), protocol=4)
+        print('pickle dumped')
+    return X_new, y_new
 
 
 def show_progress(block_num, block_size, total_size):
@@ -188,27 +198,26 @@ def _gen_data_bosch(n_samples=0, n_features=0, random_state=42):
     """Wrapper returning Bosch dataset in Pandas format"""
     dataset_name = "Bosch"
     def load_df(n_samples):
-        print("kaggle competitions download -c bosch-production-line-performance -f " +
-                  filename + " -p " + DATASETS_DIRECTORY)
         filename = "train_numeric.csv.zip"
         local_url = os.path.join(DATASETS_DIRECTORY, filename)
-        os.system("kaggle competitions download -c bosch-production-line-performance -f " +
-                  filename + " -p " + DATASETS_DIRECTORY)
+        if not os.path.isfile(local_url):
+          os.system("kaggle competitions download -c bosch-production-line-performance -f " +
+                    filename + " -p " + DATASETS_DIRECTORY)
         kwargs = {'nrows': n_samples} if n_samples else {}
         X = pd.read_csv(local_url, index_col=0, compression='zip', dtype=np.float32,
                         **kwargs)
-        y = X.iloc[:, -1].to_numpy(dtype=np.float32)
+        import pdb; pdb.set_trace()
+        y = X.iloc[:, -1]
         X.drop(X.columns[-1], axis=1, inplace=True)
-        X = X.to_numpy(dtype=np.float32)
         return X, y
-    return _unpickle_and_crop_df(dataset_name, load_df, n_samples, n_features)
+    return _unpickle_or_crop_df(dataset_name, load_df, n_samples, n_features)
 
 
 def _gen_data_covtype(n_samples=0, n_features=0, random_state=42):
     """Wrapper returning covtype in Pandas format"""
     def load_df(n_samples):
-        return fetch_covtype(return_X_y=True)  # pylint: disable=unexpected-keyword-arg
-    return _unpickle_and_crop_df("covtype", load_df, n_samples, n_features)
+        return fetch_covtype(data_home=DATASETS_DIRECTORY, return_X_y=True)
+    return _unpickle_or_crop_df("covtype", load_df, n_samples, n_features)
 
 
 def _gen_data_epsilon(n_samples=0, n_features=0, random_state=42):
@@ -219,21 +228,20 @@ def _gen_data_epsilon(n_samples=0, n_features=0, random_state=42):
         train_uncompressed = _download_and_cache(url_train)
         print('loading ', train_uncompressed)
         X, y = load_svmlight_file(train_uncompressed, dtype=np.float32)
-        if not n_samples or n_samples > y_train.size:
+        if not n_samples or n_samples > y.size:
             url_test = 'https://www.csie.ntu.edu.tw/~cjlin/libsvmtools' \
                        '/datasets/binary/epsilon_normalized.t.bz2'
             test_uncompressed = _download_and_cache(url_test)
             print('loading ', test_uncompressed)
             X_test, y_test = load_svmlight_file(test_uncompressed,
                                                 dtype=np.float32)
-            X = np.vstack(X, X_test)
-            y = np.append(y, y_test)
+            X = X.append(X_test)
+            y = y.append(y_test)
 
-        X = X.toarray()
-        y[y <= 0] = 0
+        y.iloc[y <= 0] = 0
 
         return X, y
-    return _unpickle_and_crop_df("epsilon", load_df, n_samples, n_features)
+    return _unpickle_or_crop_df("epsilon", load_df, n_samples, n_features)
 
 
 def _gen_data_year(n_samples=0, n_features=0, random_state=42):
@@ -243,16 +251,16 @@ def _gen_data_year(n_samples=0, n_features=0, random_state=42):
             '.zip'
       uncompressed = _download_and_cache(url)
       kwargs = {'nrows': n_samples} if n_samples else {}
-      year = pd.read_csv(uncompressed, header=None, **kwargs)
-      X = year.iloc[:, 1:].to_numpy(dtype=np.float32)
-      y = year.iloc[:, 0].to_numpy(dtype=np.float32)
+      year = pd.read_csv(uncompressed, header=None, dtype=np.float32, **kwargs)
+      X = year.iloc[:, 1:]
+      y = year.iloc[:, 0]
 
       return X, y
-    return _unpickle_and_crop_df("Year", load_df, n_samples, n_features)
+    return _unpickle_or_crop_df("Year", load_df, n_samples, n_features)
 
 
 def _gen_data_higgs(n_samples=0, n_features=0, random_state=42):
-    """Wrapper returning Higgs in cudf format"""
+    """Wrapper returning Higgs in Pandas format"""
     def load_higgs(n_samples):
         """Returns the Higgs Boson dataset as an X, y tuple of dataframes."""
         higgs_url = 'https://archive.ics.uci.edu/ml/machine-learning-databases' \
@@ -266,14 +274,15 @@ def _gen_data_higgs(n_samples=0, n_features=0, random_state=42):
             np.float32 for _ in range(2, 30)
         ]  # Assign dtypes to each column
         kwargs = {'nrows': n_samples} if n_samples else {}
+        print(kwargs)
         data_df = pd.read_csv(
             decompressed_filepath, names=col_names, **kwargs,
             dtype={k: v for k, v in zip(col_names, dtypes_ls)}
         )
         X_df = data_df[data_df.columns.difference(['label'])]
         y_df = data_df['label']
-        return cudf.DataFrame.from_pandas(X_df), cudf.Series.from_pandas(y_df)
-    return _unpickle_and_crop_df("Higgs", load_higgs, n_samples, n_features)
+        return X_df, y_df
+    return _unpickle_or_crop_df("Higgs", load_higgs, n_samples, n_features)
 
 
 def _convert_to_numpy(data):
