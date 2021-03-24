@@ -371,8 +371,6 @@ struct sparse_forest : forest {
 };
 
 void check_params(const forest_params_t* params, bool dense) {
-  ASSERT(params->num_classes <= 2 || params->threads_per_tree == 1,
-         "multiclass not supported with threads_per_tree > 1");
   if (dense) {
     ASSERT(params->depth >= 0, "depth must be non-negative for dense forests");
   } else {
@@ -409,12 +407,16 @@ void check_params(const forest_params_t* params, bool dense) {
              "softmax does not make sense for leaf_algo == FLOAT_UNARY_BINARY");
       break;
     case leaf_algo_t::GROVE_PER_CLASS:
+      ASSERT(params->threads_per_tree == 1,
+             "multiclass not supported with threads_per_tree > 1");
       ASSERT(params->num_classes > 2,
              "num_classes > 2 is required for leaf_algo == GROVE_PER_CLASS");
       ASSERT(params->num_trees % params->num_classes == 0,
              "num_classes must divide num_trees evenly for GROVE_PER_CLASS");
       break;
     case leaf_algo_t::CATEGORICAL_LEAF:
+      ASSERT(params->threads_per_tree == 1,
+             "multiclass not supported with threads_per_tree > 1");
       ASSERT(params->num_classes >= 2,
              "num_classes >= 2 is required for "
              "leaf_algo == CATEGORICAL_LEAF");

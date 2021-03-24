@@ -255,7 +255,7 @@ struct tree_aggregator_t {
     __syncthreads();
     if (threadIdx.x >= num_rows) return;
     int row = 0;  // will really break if NITEMS > 1
-    out[(threadIdx.x % threads_per_tree) * output_stride] = acc[row];
+    out[threadIdx.x * output_stride] = acc[row];
   }
 };
 
@@ -565,7 +565,6 @@ __global__ void infer_k(storage_type forest, predict_params params) {
 
     __syncthreads();  // for both row cache init and acc init
 
-    size_t num_input_rows = min((size_t)NITEMS, params.num_rows - block_row0);
     // one block works on NITEMS rows and the whole forest
     for (int j = threadIdx.x;
          j - threadIdx.x < forest.num_trees() * params.threads_per_tree;
@@ -578,14 +577,16 @@ __global__ void infer_k(storage_type forest, predict_params params) {
       int row = j % params.threads_per_tree;  // will break for NITEMS > 1
       if (tree < forest.num_trees()) {
         auto prediction = infer_one_tree<NITEMS, leaf_output_t<leaf_algo>::T>(
-          forest[j],
+          forest[tree],
           cols_in_shmem ? sdata + row * sdata_stride
                         : params.data + block_row0 * params.num_cols,
-          params.num_cols, num_input_rows);
-        acc.accumulate(prediction, j, num_input_rows);
+          params.num_cols, 1);
+        acc.accumulate(prediction, tree, 1);
       }
       if (leaf_algo == GROVE_PER_CLASS_MANY_CLASSES) __syncthreads();
     }
+    int num_input_rows =
+      min((size_t)params.threads_per_tree, params.num_rows - block_row0);
     acc.finalize(params.preds + params.num_outputs * block_row0, num_input_rows,
                  params.num_outputs, params.transform, forest.num_trees(),
                  params.threads_per_tree);
@@ -629,30 +630,8 @@ void shmem_size_params::compute_smem_footprint() {
 template <leaf_algo_t leaf_algo, bool cols_in_shmem, typename storage_type>
 void infer_k_nitems_launcher(storage_type forest, predict_params params,
                              cudaStream_t stream, int block_dim_x) {
-  switch (params.n_items) {
-    case 1:
-      infer_k<1, leaf_algo, cols_in_shmem>
-        <<<params.num_blocks, block_dim_x, params.shm_sz, stream>>>(forest,
-                                                                    params);
-      break;
-    case 2:
-      infer_k<2, leaf_algo, cols_in_shmem>
-        <<<params.num_blocks, block_dim_x, params.shm_sz, stream>>>(forest,
-                                                                    params);
-      break;
-    case 3:
-      infer_k<3, leaf_algo, cols_in_shmem>
-        <<<params.num_blocks, block_dim_x, params.shm_sz, stream>>>(forest,
-                                                                    params);
-      break;
-    case 4:
-      infer_k<4, leaf_algo, cols_in_shmem>
-        <<<params.num_blocks, block_dim_x, params.shm_sz, stream>>>(forest,
-                                                                    params);
-      break;
-    default:
-      ASSERT(false, "internal error: nitems > 4");
-  }
+  infer_k<1, leaf_algo, cols_in_shmem>
+    <<<params.num_blocks, block_dim_x, params.shm_sz, stream>>>(forest, params);
   CUDA_CHECK(cudaPeekAtLastError());
 }
 

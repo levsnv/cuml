@@ -119,7 +119,6 @@ class BaseFilTest : public testing::TestWithParam<FilTestParams> {
     ps = testing::TestWithParam<FilTestParams>::GetParam();
     CUDA_CHECK(cudaStreamCreate(&stream));
     handle.set_stream(stream);
-
     generate_forest();
     generate_data();
     predict_on_cpu();
