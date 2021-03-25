@@ -440,12 +440,15 @@ int tree_root(const tl::Tree<T, L>& tree) {
   return 0;  // Treelite format assumes that the root is 0
 }
 
+struct level_entry {
+  int n_branches, n_leaves;
+};
 typedef std::pair<int, int> pair_t;
 using std::tie;
 // hist has branch and leaf count given depth
 template <typename T, typename L>
 inline void tree_depth_hist(const tl::Tree<T, L>& tree,
-                            std::unordered_map<int, pair_t>& hist) {
+                            std::unordered_map<int, level_entry>& hist) {
   std::stack<pair_t> stack;  // {tl_id, depth}
   stack.push({tree_root(tree), 0});
   while (!stack.empty()) {
@@ -453,32 +456,53 @@ inline void tree_depth_hist(const tl::Tree<T, L>& tree,
     tie(node_id, depth) = stack.top();
     stack.pop();
     while (!tree.IsLeaf(node_id)) {
-      hist[depth].first++;
+      hist[depth].n_branches++;
       stack.push({tree.LeftChild(node_id), depth + 1});
       node_id = tree.RightChild(node_id);
       depth++;
     }
-    hist[depth].second++;
+    hist[depth].n_leaves++;
   }
 }
 
 template <typename T, typename L>
 void depth_hist_and_max(const tl::ModelImpl<T, L>& model) {
-  std::unordered_map<int, pair_t> depth_hist;
+  std::unordered_map<int, level_entry> depth_hist;
   for (const auto& tree : model.trees) tree_depth_hist(tree, depth_hist);
-  std::vector<std::pair<int, pair_t>> vec_hist;
-  for (auto p : depth_hist) vec_hist.emplace_back(p);
-  std::sort(vec_hist.begin(), vec_hist.end(),
-            [](auto a, auto b) { return a.first < b.first; });
-  printf("Forest max depth: %d\n", vec_hist.back().first);
-  printf("Depth hist:\ndepth\tbranches\tleaves\tnodes\n");
-  for (auto p : vec_hist) {
-    int level = p.first;
-    int n_branches, n_leaves;
-    tie(n_branches, n_leaves) = p.second;
-    printf("%3d\t%6d\t%6d\t%7d\n", level, n_branches, n_leaves,
-           n_branches + n_leaves);
+  struct hist_entry {
+    int level, n_branches, n_leaves;
+  };
+  std::vector<hist_entry> vec_hist;
+  for (auto p : depth_hist) {
+    vec_hist.emplace_back(
+      hist_entry{p.first, p.second.n_branches, p.second.n_leaves});
   }
+  std::sort(vec_hist.begin(), vec_hist.end(),
+            [](auto a, auto b) { return a.level < b.level; });
+
+  int min_depth = -1, leaves_times_depth = 0, total_branches = 0,
+      total_leaves = 0;
+  // 64-bit Fowler/Noll/Vo
+  size_t fingerprint = 14695981039346656037l;
+  printf("Depth hist:\ndepth\tbranches\tleaves\tnodes\n");
+  for (hist_entry e : vec_hist) {
+    printf("%3d\t%6d\t%6d\t%7d\n", e.level, e.n_branches, e.n_leaves,
+           e.n_branches + e.n_leaves);
+    if (e.n_leaves && min_depth == -1) min_depth = e.level;
+    leaves_times_depth += e.n_leaves * e.level;
+    total_branches += e.n_branches;
+    total_leaves += e.n_leaves;
+    for (int x : {e.level, e.n_branches, e.n_leaves})
+      fingerprint = (fingerprint * 1099511628211l) ^ x;
+  }
+  int total_nodes = total_branches + total_leaves;
+  printf("Total: branches: %d leaves: %d nodes: %d\n", total_branches,
+         total_leaves, total_nodes);
+  printf("Avg nodes per tree: %.1f\n",
+         total_nodes / (float)vec_hist[0].n_branches);
+  printf("Leaf depth: min: %d avg %.1f max %lu\n", min_depth,
+         leaves_times_depth / (float)total_leaves, vec_hist.size() - 1);
+  printf("Depth histogram fingerprint: %0lx\n", fingerprint);
 }
 
 template <typename T, typename L>
