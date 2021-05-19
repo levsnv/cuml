@@ -168,9 +168,12 @@ std::vector<Params> getInputs() {
   using ML::fil::algo_t;
   using ML::fil::storage_type_t;
   std::vector<FilBenchParams> var_params = {
-    {(int)1e6, 20, 1, 5, 1000, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG},
-    {(int)1e6, 20, 2, 5, 1000, storage_type_t::DENSE,
-     algo_t::BATCH_TREE_REORG}};
+    {(int)1e6, 28, 2, 10, 700, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG}, // higgs
+    {(int)1e6, 2000, 2, 9, 700, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG}, // epsilon
+    {(int)1e6, 968, 2, 8, 700, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG}, // bosch numeric
+    {(int)1e6, 2000, 2, 9, 700, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG}, // covtype (here: binary)
+    {(int)1e6, 90, 1, 10, 700, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG}, // year (regression)
+    };
   for (auto& i : var_params) {
     p.data.nrows = i.nrows;
     p.data.ncols = i.ncols;
