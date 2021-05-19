@@ -191,6 +191,8 @@ cdef extern from "cuml/fil/fil.h" namespace "ML::fil":
         # n_items is how many input samples (items) any thread processes.
         # if 0 is given, FIL chooses itself
         int n_items
+        # this affects inference performance and will become configurable soon
+        char** pforest_shape_str
 
     cdef void free(handle_t& handle,
                    forest_t)
@@ -205,9 +207,7 @@ cdef extern from "cuml/fil/fil.h" namespace "ML::fil":
     cdef forest_t from_treelite(handle_t& handle,
                                 forest_t*,
                                 ModelHandle,
-                                treelite_params_t*,
-                                bool,
-                                char**) except +
+                                treelite_params_t*) except +
 
 cdef class ForestInference_impl():
 
@@ -341,7 +341,6 @@ cdef class ForestInference_impl():
                                  float threshold,
                                  str storage_type,
                                  int blocks_per_sm,
-                                 bool print_forest_shape,
                                  forest_shape_file):
         TreeliteQueryNumClass(<ModelHandle> model.handle,
                               & self.num_class)
@@ -349,8 +348,13 @@ cdef class ForestInference_impl():
                                                     output_class, algo,
                                                     threshold, storage_type,
                                                     blocks_per_sm,
-                                                    print_forest_shape,
                                                     forest_shape_file)
+
+
+    def load_from_treelite_model(self, **kwargs):
+        cdef TreeliteModel model = kwargs['model']
+        return self.load_from_treelite_model_handle(
+            model_handle=<uintptr_t>model.handle, **kwargs)
 
     def load_using_treelite_handle(self, **kwargs):
         cdef treelite_params_t treelite_params
@@ -364,6 +368,11 @@ cdef class ForestInference_impl():
         treelite_params.blocks_per_sm = kwargs['blocks_per_sm']
         treelite_params.n_items = kwargs['n_items']
         treelite_params.threads_per_tree = kwargs['threads_per_tree']
+        cdef char* forest_shape_str
+        if kwargs['forest_shape_file'] is not None:
+            treelite_params.pforest_shape_str = &forest_shape_str
+        else:
+            treelite_params.pforest_shape_str = NULL
 
         cdef handle_t* handle_ =\
             <handle_t*><size_t>self.handle.getHandle()
@@ -373,11 +382,10 @@ cdef class ForestInference_impl():
         from_treelite(handle_[0],
                       &self.forest_data,
                       <ModelHandle> model_ptr,
-                      &treelite_params,
-                      print_forest_shape,
-                      &forest_shape_str)
-        if print_forest_shape:
-          forest_shape_file.write(forest_shape_str)
+                      &treelite_params)
+        if kwargs['forest_shape_file'] is not None:
+            kwargs['forest_shape_file'].write(forest_shape_str)
+            free(forest_shape_str)
         TreeliteQueryNumClass(<ModelHandle> model_ptr,
                               &self.num_class)
         return self
@@ -539,7 +547,6 @@ class ForestInference(Base,
                                  blocks_per_sm=0,
                                  threads_per_tree=1,
                                  n_items=0,
-                                 print_forest_shape=False,
                                  forest_shape_file=None,
                                  ):
         """Creates a FIL model using the treelite model
@@ -593,11 +600,10 @@ class ForestInference(Base,
               maximum supported number of threads per GPU. Even if successful,
               it is not guaranteed that blocks_per_sm blocks will run on an SM
               concurrently.
-        print_forest_shape : boolean (defaul=False)
-            if True, writes a human-readable forest shape description as a
-            multiline ascii string into a file-like object forest_shape_file
         forest_shape_file : file, io.StringIO or alike (default=None)
-            if print_forest_shape, calls forest_shape_file.write(ascii_string)
+            if not None, calls forest_shape_file.write(ascii_string)
+            (writes a human-readable forest shape description as a
+            multiline ascii string)
 
         Returns
         ----------
@@ -623,7 +629,6 @@ class ForestInference(Base,
                           blocks_per_sm=0,
                           threads_per_tree=1,
                           n_items=0,
-                          print_forest_shape=False,
                           forest_shape_file=None,
                           handle=None):
         """
@@ -672,11 +677,10 @@ class ForestInference(Base,
               maximum supported number of threads per GPU. Even if successful,
               it is not guaranteed that blocks_per_sm blocks will run on an SM
               concurrently.
-        print_forest_shape : boolean (defaul=False)
-            if True, writes a human-readable forest shape description as a
-            multiline ascii string into a file-like object forest_shape_file
         forest_shape_file : file, io.StringIO or alike (default=None)
-            if print_forest_shape, calls forest_shape_file.write(ascii_string)
+            if not None, calls forest_shape_file.write(ascii_string)
+            (writes a human-readable forest shape description as a
+            multiline ascii string)
 
         Returns
         ----------
@@ -704,7 +708,6 @@ class ForestInference(Base,
              blocks_per_sm=0,
              threads_per_tree=1,
              n_items=0,
-             print_forest_shape=False,
              forest_shape_file=None,
              model_type="xgboost",
              handle=None):
@@ -741,11 +744,10 @@ class ForestInference(Base,
               maximum supported number of threads per GPU. Even if successful,
               it is not guaranteed that blocks_per_sm blocks will run on an SM
               concurrently.
-        print_forest_shape : boolean (defaul=False)
-            if True, writes a human-readable forest shape description as a
-            multiline ascii string into a file-like object forest_shape_file
         forest_shape_file : file, io.StringIO or alike (default=None)
-            if print_forest_shape, calls forest_shape_file.write(ascii_string)
+            if not None, calls forest_shape_file.write(ascii_string)
+            (writes a human-readable forest shape description as a
+            multiline ascii string)
         model_type : string (default="xgboost")
             Format of the saved treelite model to be load.
             It can be 'xgboost', 'xgboost_json', 'lightgbm'.
@@ -773,7 +775,6 @@ class ForestInference(Base,
                                    blocks_per_sm=0,
                                    threads_per_tree=1,
                                    n_items=0,
-                                   print_forest_shape=False,
                                    forest_shape_file=None,
                                    ):
         """
@@ -808,11 +809,10 @@ class ForestInference(Base,
               maximum supported number of threads per GPU. Even if successful,
               it is not guaranteed that blocks_per_sm blocks will run on an SM
               concurrently.
-        print_forest_shape : boolean (defaul=False)
-            if True, writes a human-readable forest shape description as a
-            multiline ascii string into a file-like object forest_shape_file
         forest_shape_file : file, io.StringIO or alike (default=None)
-            if print_forest_shape, calls forest_shape_file.write(ascii_string)
+            if not None, calls forest_shape_file.write(ascii_string)
+            (writes a human-readable forest shape description as a
+            multiline ascii string)
 
         Returns
         ----------

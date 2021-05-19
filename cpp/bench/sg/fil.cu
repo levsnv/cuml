@@ -86,6 +86,7 @@ class FIL : public RegressionFixture<float> {
 
     ML::build_treelite_forest(&model, &rf_model, params.ncols,
                               params.nclasses > 1 ? 2 : 1);
+    char shape[500];
     ML::fil::treelite_params_t tl_params = {
       .algo = p_rest.algo,
       .output_class = params.nclasses > 1,  // cuML RF forest
@@ -93,7 +94,9 @@ class FIL : public RegressionFixture<float> {
       .storage_type = p_rest.storage,
       .blocks_per_sm = 8,
       .threads_per_tree = 1,
-      .n_items = 0};
+      .n_items = 0,
+      .pforest_shape_str = &shape};
+    std::cout << shape;
     ML::fil::from_treelite(*handle, &forest, model, &tl_params);
 
     // only time prediction

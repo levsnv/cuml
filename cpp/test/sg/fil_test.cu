@@ -59,6 +59,7 @@ struct FilTestParams {
   algo_t algo = algo_t::NAIVE;
   int seed = 42;
   float tolerance = 2e-3f;
+  bool print_forest_shape = false;
   // treelite parameters, only used for treelite tests
   tl::Operator op = tl::Operator::kLT;
   leaf_algo_t leaf_algo = leaf_algo_t::FLOAT_UNARY_BINARY;
@@ -620,8 +621,25 @@ class TreeliteFilTest : public BaseFilTest {
     params.blocks_per_sm = ps.blocks_per_sm;
     params.threads_per_tree = ps.threads_per_tree;
     params.n_items = ps.n_items;
+    char* forest_shape_str = nullptr;
+    params.pforest_shape_str =
+      ps.print_forest_shape ? &forest_shape_str : nullptr;
     fil::from_treelite(handle, pforest, (ModelHandle)model.get(), &params);
     CUDA_CHECK(cudaStreamSynchronize(stream));
+    if (ps.print_forest_shape) {
+      std::string str(forest_shape_str);
+      auto check_substring = [&](const char* substr) {
+        ASSERT(str.find(substr) != std::string::npos,
+               "\"%s\" not found in forest shape", substr);
+      };
+      check_substring("model size");
+      check_substring(" MB");
+      check_substring("Depth histogram:");
+      check_substring("Avg nodes per tree");
+      check_substring("Leaf depth");
+      check_substring("Depth histogram fingerprint");
+    }
+    ::free(forest_shape_str);
   }
 };
 
@@ -885,6 +903,7 @@ std::vector<FilTestParams> import_dense_inputs = {
                   leaf_algo = GROVE_PER_CLASS, num_classes = 7),
   FIL_TEST_PARAMS(num_trees = 48, output = CLASS, leaf_algo = GROVE_PER_CLASS,
                   num_classes = 6),
+  FIL_TEST_PARAMS(print_forest_shape = true),
 };
 
 TEST_P(TreeliteDenseFilTest, Import) { compare(); }
