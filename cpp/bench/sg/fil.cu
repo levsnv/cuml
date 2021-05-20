@@ -86,7 +86,7 @@ class FIL : public RegressionFixture<float> {
 
     ML::build_treelite_forest(&model, &rf_model, params.ncols,
                               params.nclasses > 1 ? 2 : 1);
-    char shape[500];
+    //char* shape;
     ML::fil::treelite_params_t tl_params = {
       .algo = p_rest.algo,
       .output_class = params.nclasses > 1,  // cuML RF forest
@@ -95,10 +95,43 @@ class FIL : public RegressionFixture<float> {
       .blocks_per_sm = 8,
       .threads_per_tree = 1,
       .n_items = 0,
-      .pforest_shape_str = &shape};
-    std::cout << shape;
-    ML::fil::from_treelite(*handle, &forest, model, &tl_params);
+      .pforest_shape_str = nullptr};  //&shape};
 
+    for (tl_params.threads_per_tree = 1; tl_params.threads_per_tree <= 32;
+         tl_params.threads_per_tree *= 2) {
+      ML::fil::from_treelite(*handle, &forest, model, &tl_params);
+      //std::cout << shape << std::endl;
+      //::free(shape);
+
+      cudaEvent_t start;
+      cudaEvent_t stop;
+      CUDA_CHECK(cudaEventCreate(&start));
+      CUDA_CHECK(cudaEventCreate(&stop));
+      for (int i = 1; i < p_rest.predict_repetitions; ++i) {
+        ML::fil::predict(*this->handle, this->forest, this->data.y,
+                         this->data.X, this->params.nrows, false);
+      }
+      CUDA_CHECK(cudaEventRecord(start, 0));
+      for (int i = 0; i < p_rest.predict_repetitions; i++) {
+        ML::fil::predict(*this->handle, this->forest, this->data.y,
+                         this->data.X, this->params.nrows, false);
+      }
+      CUDA_CHECK_NO_THROW(cudaEventRecord(stop, 0));
+      CUDA_CHECK_NO_THROW(cudaEventSynchronize(stop));
+      float milliseconds = 0.0f;
+      CUDA_CHECK_NO_THROW(cudaEventElapsedTime(&milliseconds, start, stop));
+      float ms_per_rep = milliseconds / p_rest.predict_repetitions;
+      float ns_per_row = ms_per_rep / p_rest.data.nrows * 1e6;
+      printf(
+        "max_depth %d n_trees %d n_cols %d threads_per_tree %d %7s "
+        "%.2f ms %.0f ns/row\n",
+        p_rest.rf.tree_params.max_depth, p_rest.rf.n_trees, p_rest.data.ncols,
+        tl_params.threads_per_tree,
+        ML::fil::storage_type_repr[tl_params.storage_type], ms_per_rep,
+        ns_per_row);
+      CUDA_CHECK_NO_THROW(cudaEventDestroy(start));
+      CUDA_CHECK_NO_THROW(cudaEventDestroy(stop));
+    }
     // only time prediction
     this->loopOnState(state, [this]() {
       // Dataset<D, L> allocates y assuming one output value per input row,
@@ -171,12 +204,15 @@ std::vector<Params> getInputs() {
   using ML::fil::algo_t;
   using ML::fil::storage_type_t;
   std::vector<FilBenchParams> var_params = {
-    {(int)1e6, 28, 2, 10, 700, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG}, // higgs
-    {(int)1e6, 2000, 2, 9, 700, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG}, // epsilon
-    {(int)1e6, 968, 2, 8, 700, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG}, // bosch numeric
-    {(int)1e6, 2000, 2, 9, 700, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG}, // covtype (here: binary)
-    {(int)1e6, 90, 1, 10, 700, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG}, // year (regression)
-    };
+    {(int)1e6, 28, 2, 12, 700, storage_type_t::DENSE,
+     algo_t::BATCH_TREE_REORG},  // higgs
+    {(int)1e6, 54, 2, 9, 700, storage_type_t::DENSE,
+     algo_t::BATCH_TREE_REORG},  // covtype (here: binary)
+    {(int)1e6, 90, 1, 10, 700, storage_type_t::DENSE,
+     algo_t::BATCH_TREE_REORG},  // year (regression)
+    //{(int)4e5, 968, 2, 8, 700, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG}, // bosch numeric
+    //{(int)2e5, 2000, 2, 9, 700, storage_type_t::DENSE, algo_t::BATCH_TREE_REORG}, // epsilon
+  };
   for (auto& i : var_params) {
     p.data.nrows = i.nrows;
     p.data.ncols = i.ncols;
@@ -187,7 +223,7 @@ std::vector<Params> getInputs() {
     p.rf.n_trees = i.ntrees;
     p.storage = i.storage;
     p.algo = i.algo;
-    p.predict_repetitions = 10;
+    p.predict_repetitions = 100;
     out.push_back(p);
   }
   return out;
