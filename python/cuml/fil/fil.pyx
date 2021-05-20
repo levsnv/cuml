@@ -377,7 +377,6 @@ cdef class ForestInference_impl():
         cdef handle_t* handle_ =\
             <handle_t*><size_t>self.handle.getHandle()
         cdef uintptr_t model_ptr = <uintptr_t>kwargs['model_handle']
-        cdef char* forest_shape_str
 
         from_treelite(handle_[0],
                       &self.forest_data,
