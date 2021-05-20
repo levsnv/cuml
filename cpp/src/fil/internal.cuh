@@ -18,10 +18,17 @@
 
 #pragma once
 
-#include <cuml/cuml.hpp>
+namespace raft {
+class handle_t;
+}
 
 namespace ML {
 namespace fil {
+
+/// modpow2 returns a % b == a % pow(2, log2_b)
+__host__ __device__ __forceinline__ int modpow2(int a, int log2_b) {
+  return a & ((1 << log2_b) - 1);
+}
 
 /**
  * output_t are flags that define the output produced by the FIL predictor; a
@@ -144,17 +151,14 @@ struct alignas(8) sparse_node8 : base_node {
   }
   sparse_node8() = default;
   sparse_node8(val_t output, float thresh, int fid, bool def_left, bool is_leaf,
-               int left_child) {
+               int left_index) {
     if (is_leaf)
       val = output;
     else
       val.f = thresh;
-    bits = fid | left_child << LEFT_OFFSET |
+    bits = fid | left_index << LEFT_OFFSET |
            (def_left ? 1 : 0) << DEF_LEFT_OFFSET |
            (is_leaf ? 1 : 0) << IS_LEAF_OFFSET;
-    ASSERT(is_leaf || left_index() == left_child,
-           "error: sparse8 node was too far from root. Consider sparse16, a "
-           "more compact node layout, or smaller trees.");
   }
   /** index of the left child, where curr is the index of the current node */
   __host__ __device__ int left(int curr) const { return left_index(); }
@@ -241,6 +245,12 @@ struct forest_params_t {
   // suggested values (if nonzero) are from 2 to 7
   // if zero, launches ceildiv(num_rows, NITEMS) blocks
   int blocks_per_sm;
+  // threads_per_tree determines how many threads work on a single tree
+  // at once inside a block (sharing trees means splitting input rows)
+  int threads_per_tree;
+  // n_items is how many input samples (items) any thread processes. If 0 is given,
+  // choose most (up to 4) that fit into shared memory.
+  int n_items;
 };
 
 /// FIL_TPB is the number of threads per block to use with FIL kernels

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2020, NVIDIA CORPORATION.
+ * Copyright (c) 2019-2021, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,12 @@
 
 #pragma once
 
-#include <cuml/cuml.hpp>
+#include <stddef.h>
 #include <cuml/ensemble/treelite_defs.hpp>
+
+namespace raft {
+class handle_t;
+}
 
 namespace ML {
 namespace fil {
@@ -86,6 +90,15 @@ struct treelite_params_t {
   // suggested values (if nonzero) are from 2 to 7
   // if zero, launches ceildiv(num_rows, NITEMS) blocks
   int blocks_per_sm;
+  // threads_per_tree determines how many threads work on a single tree at once inside a block
+  // can only be a power of 2
+  int threads_per_tree;
+  // n_items is how many input samples (items) any thread processes. If 0 is given,
+  // choose most (up to 4) that fit into shared memory.
+  int n_items;
+  // if non-nullptr, *pforest_shape_str will be set to caller-owned string that
+  // contains forest shape
+  char** pforest_shape_str;
 };
 
 /** from_treelite uses a treelite model to initialize the forest
@@ -95,8 +108,7 @@ struct treelite_params_t {
  * @param tl_params additional parameters for the forest
  */
 void from_treelite(const raft::handle_t& handle, forest_t* pforest,
-                   ModelHandle model, const treelite_params_t* tl_params,
-                   bool print_forest_shape);
+                   ModelHandle model, const treelite_params_t* tl_params);
 
 /** free deletes forest and all resources held by it; after this, forest is no longer usable
  *  @param h cuML handle used by this function

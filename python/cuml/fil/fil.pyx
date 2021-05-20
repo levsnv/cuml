@@ -120,7 +120,7 @@ cdef class TreeliteModel():
             Path to treelite model file to load
 
         model_type : string
-            Type of model: 'xgboost', or 'lightgbm'
+            Type of model: 'xgboost', 'xgboost_json', or 'lightgbm'
         """
         filename_bytes = filename.encode("UTF-8")
         cdef ModelHandle handle
@@ -178,10 +178,21 @@ cdef extern from "cuml/fil/fil.h" namespace "ML::fil":
         algo_t algo
         bool output_class
         float threshold
+        # changing the parameters below may speed up inference
+        # tree storage format, tradeoffs in big O(), node size
+        # not all formats fit all models
         storage_type_t storage_type
-        int blocks_per_sm
         # limit number of CUDA blocks launched per GPU SM (or unlimited if 0)
+        int blocks_per_sm
+        # multiple (neighboring) threads infer on the same tree within a block
+        # this improves memory bandwith near tree root (but uses more shared
+        # memory)
+        int threads_per_tree
+        # n_items is how many input samples (items) any thread processes.
+        # if 0 is given, FIL chooses itself
+        int n_items
         # this affects inference performance and will become configurable soon
+        char** pforest_shape_str
 
     cdef void free(handle_t& handle,
                    forest_t)
@@ -196,8 +207,7 @@ cdef extern from "cuml/fil/fil.h" namespace "ML::fil":
     cdef forest_t from_treelite(handle_t& handle,
                                 forest_t*,
                                 ModelHandle,
-                                treelite_params_t*,
-                                bool) except +
+                                treelite_params_t*) except +
 
 cdef class ForestInference_impl():
 
@@ -225,7 +235,8 @@ cdef class ForestInference_impl():
                             ' to the documentation')
         return algo_dict[algo_str]
 
-    def get_storage_type(self, storage_type_str):
+    def get_storage_type(self, storage_type):
+        storage_type_str = str(storage_type)
         storage_type_dict={'auto': storage_type_t.AUTO,
                            'False': storage_type_t.DENSE,
                            'dense': storage_type_t.DENSE,
@@ -314,35 +325,14 @@ cdef class ForestInference_impl():
 
         return preds
 
-    def load_from_treelite_model_handle(self,
-                                        uintptr_t model_handle,
-                                        bool output_class,
-                                        str algo,
-                                        float threshold,
-                                        str storage_type,
-                                        int blocks_per_sm):
-        cdef treelite_params_t treelite_params
-
-        self.output_class = output_class
-        treelite_params.output_class = self.output_class
-        treelite_params.threshold = threshold
-        treelite_params.algo = self.get_algo(algo)
-        treelite_params.storage_type = self.get_storage_type(storage_type)
-        treelite_params.blocks_per_sm = blocks_per_sm
-
+    def load_from_treelite_model_handle(self, **kwargs):
         self.forest_data = NULL
-        cdef handle_t* handle_ =\
-            <handle_t*><size_t>self.handle.getHandle()
-        cdef uintptr_t model_ptr = <uintptr_t>model_handle
+        return self.load_using_treelite_handle(**kwargs)
 
-        from_treelite(handle_[0],
-                      &self.forest_data,
-                      <ModelHandle> model_ptr,
-                      &treelite_params,
-                      True)
-        TreeliteQueryNumClass(<ModelHandle> model_ptr,
-                              & self.num_class)
-        return self
+    def load_from_treelite_model(self, **kwargs):
+        cdef TreeliteModel model = kwargs['model']
+        return self.load_from_treelite_model_handle(
+            model_handle=<uintptr_t>model.handle, **kwargs)
 
     def load_from_treelite_model(self,
                                  TreeliteModel model,
@@ -350,40 +340,51 @@ cdef class ForestInference_impl():
                                  str algo,
                                  float threshold,
                                  str storage_type,
-                                 int blocks_per_sm):
+                                 int blocks_per_sm,
+                                 forest_shape_file):
         TreeliteQueryNumClass(<ModelHandle> model.handle,
                               & self.num_class)
         return self.load_from_treelite_model_handle(<uintptr_t>model.handle,
                                                     output_class, algo,
                                                     threshold, storage_type,
-                                                    blocks_per_sm)
+                                                    blocks_per_sm,
+                                                    forest_shape_file)
 
-    def load_using_treelite_handle(self,
-                                   model_handle,
-                                   bool output_class,
-                                   str algo,
-                                   float threshold,
-                                   str storage_type,
-                                   int blocks_per_sm):
 
+    def load_from_treelite_model(self, **kwargs):
+        cdef TreeliteModel model = kwargs['model']
+        return self.load_from_treelite_model_handle(
+            model_handle=<uintptr_t>model.handle, **kwargs)
+
+    def load_using_treelite_handle(self, **kwargs):
         cdef treelite_params_t treelite_params
 
-        self.output_class = output_class
+        self.output_class = kwargs['output_class']
         treelite_params.output_class = self.output_class
-        treelite_params.threshold = threshold
-        treelite_params.algo = self.get_algo(algo)
-        treelite_params.storage_type = self.get_storage_type(storage_type)
-        treelite_params.blocks_per_sm = blocks_per_sm
+        treelite_params.threshold = kwargs['threshold']
+        treelite_params.algo = self.get_algo(kwargs['algo'])
+        treelite_params.storage_type =\
+            self.get_storage_type(kwargs['storage_type'])
+        treelite_params.blocks_per_sm = kwargs['blocks_per_sm']
+        treelite_params.n_items = kwargs['n_items']
+        treelite_params.threads_per_tree = kwargs['threads_per_tree']
+        cdef char* forest_shape_str
+        if kwargs['forest_shape_file'] is not None:
+            treelite_params.pforest_shape_str = &forest_shape_str
+        else:
+            treelite_params.pforest_shape_str = NULL
 
         cdef handle_t* handle_ =\
             <handle_t*><size_t>self.handle.getHandle()
-        cdef uintptr_t model_ptr = <uintptr_t>model_handle
+        cdef uintptr_t model_ptr = <uintptr_t>kwargs['model_handle']
 
         from_treelite(handle_[0],
                       &self.forest_data,
                       <ModelHandle> model_ptr,
-                      &treelite_params,
-                      True)
+                      &treelite_params)
+        if kwargs['forest_shape_file'] is not None:
+            kwargs['forest_shape_file'].write(forest_shape_str)
+            free(forest_shape_str)
         TreeliteQueryNumClass(<ModelHandle> model_ptr,
                               &self.num_class)
         return self
@@ -416,13 +417,14 @@ class ForestInference(Base,
      * A single row of data should fit into the shared memory of a thread
        block, which means that more than 12288 features are not supported.
      * From sklearn.ensemble, only
-       {RandomForest,GradientBoosting}{Classifier,Regressor} models are
-       supported. Other sklearn.ensemble models are currently not supported.
+       {RandomForest,GradientBoosting,ExtraTrees}{Classifier,Regressor} models
+       are supported. Other sklearn.ensemble models are currently not
+       supported.
      * Importing large SKLearn models can be slow, as it is done in Python.
      * LightGBM categorical features are not supported.
      * Inference uses a dense matrix format, which is efficient for many
        problems but can be suboptimal for sparse datasets.
-     * Only binary classification and regression are supported.
+     * Only classification and regression are supported.
      * Many other random forest implementations including LightGBM, and SKLearn
        GBDTs make use of 64-bit floating point parameters, but the underlying
        library for ForestInference uses only 32-bit parameters. Because of the
@@ -478,13 +480,13 @@ class ForestInference(Base,
 
     """
 
-    def __init__(self,
+    def __init__(self, *,
                  handle=None,
                  output_type=None,
                  verbose=False):
-        super(ForestInference, self).__init__(handle=handle,
-                                              output_type=output_type,
-                                              verbose=verbose)
+        super().__init__(handle=handle,
+                         verbose=verbose,
+                         output_type=output_type)
         self._impl = ForestInference_impl(self.handle)
 
     def predict(self, X, preds=None) -> CumlArray:
@@ -541,7 +543,11 @@ class ForestInference(Base,
                                  algo='auto',
                                  threshold=0.5,
                                  storage_type='auto',
-                                 blocks_per_sm=0):
+                                 blocks_per_sm=0,
+                                 threads_per_tree=1,
+                                 n_items=0,
+                                 forest_shape_file=None,
+                                 ):
         """Creates a FIL model using the treelite model
         passed to the function.
 
@@ -593,6 +599,10 @@ class ForestInference(Base,
               maximum supported number of threads per GPU. Even if successful,
               it is not guaranteed that blocks_per_sm blocks will run on an SM
               concurrently.
+        forest_shape_file : file, io.StringIO or alike (default=None)
+            if not None, calls forest_shape_file.write(ascii_string)
+            (writes a human-readable forest shape description as a
+            multiline ascii string)
 
         Returns
         ----------
@@ -603,14 +613,11 @@ class ForestInference(Base,
         """
         if isinstance(model, TreeliteModel):
             # TreeliteModel defined in this file
-            return self._impl.load_from_treelite_model(
-                model, output_class, algo, threshold, str(storage_type),
-                blocks_per_sm)
+            return self._impl.load_from_treelite_model(**locals())
         else:
             # assume it is treelite.Model
             return self._impl.load_from_treelite_model_handle(
-                model.handle.value, output_class, algo, threshold,
-                str(storage_type), blocks_per_sm)
+                model_handle=model.handle.value, **locals())
 
     @staticmethod
     def load_from_sklearn(skl_model,
@@ -619,10 +626,13 @@ class ForestInference(Base,
                           algo='auto',
                           storage_type='auto',
                           blocks_per_sm=0,
+                          threads_per_tree=1,
+                          n_items=0,
+                          forest_shape_file=None,
                           handle=None):
         """
         Creates a FIL model using the scikit-learn model passed to the
-        function. This function requires Treelite 0.90 to be installed.
+        function. This function requires Treelite 1.0.0+ to be installed.
 
         Parameters
         ----------
@@ -666,6 +676,10 @@ class ForestInference(Base,
               maximum supported number of threads per GPU. Even if successful,
               it is not guaranteed that blocks_per_sm blocks will run on an SM
               concurrently.
+        forest_shape_file : file, io.StringIO or alike (default=None)
+            if not None, calls forest_shape_file.write(ascii_string)
+            (writes a human-readable forest shape description as a
+            multiline ascii string)
 
         Returns
         ----------
@@ -674,15 +688,14 @@ class ForestInference(Base,
             model passed.
 
         """
+        kwargs = locals()
+        [kwargs.pop(key) for key in ['skl_model', 'handle']]
         cuml_fm = ForestInference(handle=handle)
         logger.warn("Treelite currently does not support float64 model"
                     " parameters. Accuracy may degrade slightly relative to"
                     " native sklearn invocation.")
         tl_model = tl_skl.import_model(skl_model)
-        cuml_fm.load_from_treelite_model(
-            tl_model, algo=algo, output_class=output_class,
-            storage_type=str(storage_type), threshold=threshold,
-            blocks_per_sm=blocks_per_sm)
+        cuml_fm.load_from_treelite_model(model=tl_model, **kwargs)
         return cuml_fm
 
     @staticmethod
@@ -692,6 +705,9 @@ class ForestInference(Base,
              algo='auto',
              storage_type='auto',
              blocks_per_sm=0,
+             threads_per_tree=1,
+             n_items=0,
+             forest_shape_file=None,
              model_type="xgboost",
              handle=None):
         """
@@ -727,10 +743,13 @@ class ForestInference(Base,
               maximum supported number of threads per GPU. Even if successful,
               it is not guaranteed that blocks_per_sm blocks will run on an SM
               concurrently.
-
+        forest_shape_file : file, io.StringIO or alike (default=None)
+            if not None, calls forest_shape_file.write(ascii_string)
+            (writes a human-readable forest shape description as a
+            multiline ascii string)
         model_type : string (default="xgboost")
             Format of the saved treelite model to be load.
-            It can be 'xgboost', 'lightgbm'.
+            It can be 'xgboost', 'xgboost_json', 'lightgbm'.
 
         Returns
         ----------
@@ -739,14 +758,11 @@ class ForestInference(Base,
             inferencing on the model read from the file.
 
         """
+        kwargs = locals()
+        [kwargs.pop(key) for key in ['filename', 'handle', 'model_type']]
         cuml_fm = ForestInference(handle=handle)
         tl_model = TreeliteModel.from_filename(filename, model_type=model_type)
-        cuml_fm.load_from_treelite_model(tl_model,
-                                         algo=algo,
-                                         output_class=output_class,
-                                         storage_type=str(storage_type),
-                                         threshold=threshold,
-                                         blocks_per_sm=blocks_per_sm)
+        cuml_fm.load_from_treelite_model(model=tl_model, **kwargs)
         return cuml_fm
 
     def load_using_treelite_handle(self,
@@ -755,7 +771,11 @@ class ForestInference(Base,
                                    algo='auto',
                                    storage_type='auto',
                                    threshold=0.50,
-                                   blocks_per_sm=0):
+                                   blocks_per_sm=0,
+                                   threads_per_tree=1,
+                                   n_items=0,
+                                   forest_shape_file=None,
+                                   ):
         """
         Returns a FIL instance by converting a treelite model to
         FIL model by using the treelite ModelHandle passed.
@@ -788,6 +808,10 @@ class ForestInference(Base,
               maximum supported number of threads per GPU. Even if successful,
               it is not guaranteed that blocks_per_sm blocks will run on an SM
               concurrently.
+        forest_shape_file : file, io.StringIO or alike (default=None)
+            if not None, calls forest_shape_file.write(ascii_string)
+            (writes a human-readable forest shape description as a
+            multiline ascii string)
 
         Returns
         ----------
@@ -795,10 +819,6 @@ class ForestInference(Base,
             A Forest Inference model which can be used to perform
             inferencing on the random forest model.
         """
-        self._impl.load_using_treelite_handle(model_handle,
-                                              output_class,
-                                              algo, threshold,
-                                              str(storage_type),
-                                              blocks_per_sm)
+        self._impl.load_using_treelite_handle(**locals())
         # DO NOT RETURN self._impl here!!
         return self
